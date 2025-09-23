@@ -2,6 +2,9 @@
 
 Official implementation of [K-LoRA: Unlocking Training-Free Fusion of Any Subject and Style LoRAs](https://arxiv.org/pdf/2502.18461).
 
+📄 [Chinese version](https://github.com/HVision-NKU/K-LoRA/blob/main/k_lora.pdf).
+
+
 ![teaser](pictures/teaser.svg)
 
 
