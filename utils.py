@@ -154,6 +154,46 @@ def initialize_klora_layer(
     return klora_layer
 
 
+def initialize_klora_layer_3lora(
+    alpha,
+    beta,
+    gamma,
+    sum_timesteps,
+    average_ratio,
+    average_ratio_1_3,
+    average_ratio_2_3,
+    state_dict_1_a,
+    state_dict_1_b,
+    state_dict_2_a,
+    state_dict_2_b,
+    state_dict_3_a,
+    state_dict_3_b,
+    pattern,
+    part,
+    **model_kwargs,
+):
+    """Initialize KLoRALinearLayer with 3 LoRAs (Content + Style + Lighting)."""
+    klora_layer = KLoRALinearLayer(
+        alpha=alpha,
+        beta=beta,
+        gamma=gamma,
+        sum_timesteps=sum_timesteps,
+        average_ratio=average_ratio,
+        average_ratio_1_3=average_ratio_1_3,
+        average_ratio_2_3=average_ratio_2_3,
+        pattern=pattern,
+        weight_1_a=state_dict_1_a[part],
+        weight_1_b=state_dict_1_b[part],
+        weight_2_a=state_dict_2_a[part],
+        weight_2_b=state_dict_2_b[part],
+        weight_3_a=state_dict_3_a[part],
+        weight_3_b=state_dict_3_b[part],
+        num_loras=3,
+        **model_kwargs,
+    )
+    return klora_layer
+
+
 def get_ratio_between_content_and_style(lora_weights_content, lora_weights_style):
     if len(lora_weights_content) != len(lora_weights_style):
         raise ValueError("The number of layers in content and style must be the same.")
@@ -207,6 +247,23 @@ def get_ratio_between_content_and_style(lora_weights_content, lora_weights_style
         else float("inf")
     )
     return average_ratio
+
+
+def get_ratios_for_three_loras(lora_weights_content, lora_weights_style, lora_weights_lighting):
+    """
+    Compute pairwise ratios between 3 LoRAs:
+    - ratio_1_2: Content vs Style
+    - ratio_1_3: Content vs Lighting
+    - ratio_2_3: Style vs Lighting
+
+    Returns:
+        tuple: (ratio_1_2, ratio_1_3, ratio_2_3)
+    """
+    ratio_1_2 = get_ratio_between_content_and_style(lora_weights_content, lora_weights_style)
+    ratio_1_3 = get_ratio_between_content_and_style(lora_weights_content, lora_weights_lighting)
+    ratio_2_3 = get_ratio_between_content_and_style(lora_weights_style, lora_weights_lighting)
+
+    return ratio_1_2, ratio_1_3, ratio_2_3
 
 
 def insert_sd_klora_to_unet(
@@ -407,6 +464,97 @@ def copy_and_assign_klora_weights(
             weight_2_b=lora_weights_style_A[sub_module_name],
             average_ratio=average_ratio,
             pattern=patten,
+        )
+        new_module.set_lora_layer(klora_layer)
+
+        new_module.weight.data.copy_(original_module.weight.data)
+        new_module.bias.data.copy_(original_module.bias.data)
+        setattr(attn_module, sub_module_name, new_module)
+
+    return attn_module
+
+
+def copy_and_assign_klora_weights_3lora(
+    prefix,
+    attn_module,
+    sub_module_names,
+    lora_weights_content,
+    lora_weights_style,
+    lora_weights_lighting,
+    alpha,
+    beta,
+    gamma,
+    sumtimesteps,
+    average_ratio,
+    average_ratio_1_3,
+    average_ratio_2_3,
+    patten,
+):
+    """3-LoRA version of copy_and_assign_klora_weights for 494-layer LoRAs."""
+    original_modules = {
+        sub_module_name: (
+            getattr(attn_module, sub_module_name)
+            if not isinstance(attn_module, nn.Linear)
+            else attn_module
+        )
+        for sub_module_name in sub_module_names
+    }
+    # Content LoRA weights
+    lora_weights_A = {
+        name: lora_weights_content[prefix + name + ".lora_A.weight"]
+        for name in sub_module_names
+    }
+    lora_weights_B = {
+        name: lora_weights_content[prefix + name + ".lora_B.weight"]
+        for name in sub_module_names
+    }
+    # Style LoRA weights
+    lora_weights_style_A = {
+        name: lora_weights_style[prefix + name + ".lora_A.weight"]
+        for name in sub_module_names
+    }
+    lora_weights_style_B = {
+        name: lora_weights_style[prefix + name + ".lora_B.weight"]
+        for name in sub_module_names
+    }
+    # Lighting LoRA weights
+    lora_weights_lighting_A = {
+        name: lora_weights_lighting[prefix + name + ".lora_A.weight"]
+        for name in sub_module_names
+    }
+    lora_weights_lighting_B = {
+        name: lora_weights_lighting[prefix + name + ".lora_B.weight"]
+        for name in sub_module_names
+    }
+
+    for sub_module_name in sub_module_names:
+        original_module = original_modules[sub_module_name]
+        new_module = LoRACompatibleLinear(
+            in_features=original_module.in_features,
+            out_features=original_module.out_features,
+            bias=True,
+            device=original_module.weight.device,
+            dtype=original_module.weight.dtype,
+        )
+
+        klora_layer = KLoRALinearLayer(
+            alpha=alpha,
+            beta=beta,
+            gamma=gamma,
+            sum_timesteps=sumtimesteps,
+            in_features=lora_weights_A[sub_module_name].shape[1],
+            out_features=lora_weights_B[sub_module_name].shape[0],
+            weight_1_a=lora_weights_B[sub_module_name],
+            weight_1_b=lora_weights_A[sub_module_name],
+            weight_2_a=lora_weights_style_B[sub_module_name],
+            weight_2_b=lora_weights_style_A[sub_module_name],
+            weight_3_a=lora_weights_lighting_B[sub_module_name],
+            weight_3_b=lora_weights_lighting_A[sub_module_name],
+            average_ratio=average_ratio,
+            average_ratio_1_3=average_ratio_1_3,
+            average_ratio_2_3=average_ratio_2_3,
+            pattern=patten,
+            num_loras=3,
         )
         new_module.set_lora_layer(klora_layer)
 
@@ -702,6 +850,361 @@ def insert_community_flux_lora_to_unet(
 
     else:
         raise ValueError("This kind of LoRA is not supported now, it is recommended to use dreambooth-trained LoRA")
+    return unet
+
+
+def insert_community_flux_lora_to_unet_3lora(
+    unet,
+    lora_weights_content_path,
+    lora_weights_style_path,
+    lora_weights_lighting_path,
+    alpha,
+    beta,
+    gamma,
+    diffuse_step,
+    content_lora_weight_name: str = None,
+    style_lora_weight_name: str = None,
+    lighting_lora_weight_name: str = None,
+    patten: str = "s*",
+):
+    """
+    Insert 3 LoRAs (Content + Style + Lighting) into FLUX transformer.
+    Supports 190-layer FLUX LoRAs.
+    """
+    # Load all 3 LoRAs
+    lora_weights_content = get_lora_weights(
+        lora_name_or_path=lora_weights_content_path,
+        sub_lora_weights_name=content_lora_weight_name,
+    )
+    lora_weights_style = get_lora_weights(
+        lora_name_or_path=lora_weights_style_path,
+        sub_lora_weights_name=style_lora_weight_name,
+    )
+    lora_weights_lighting = get_lora_weights(
+        lora_name_or_path=lora_weights_lighting_path,
+        sub_lora_weights_name=lighting_lora_weight_name,
+    )
+
+    # Compute pairwise ratios
+    average_ratio, average_ratio_1_3, average_ratio_2_3 = get_ratios_for_three_loras(
+        lora_weights_content, lora_weights_style, lora_weights_lighting
+    )
+
+    content_layer_nums = len(lora_weights_content) // 2
+    style_layer_nums = len(lora_weights_style) // 2
+    lighting_layer_nums = len(lora_weights_lighting) // 2
+    sum_timesteps = diffuse_step * content_layer_nums
+
+    # Validate layer counts
+    if content_layer_nums != style_layer_nums or content_layer_nums != lighting_layer_nums:
+        raise ValueError(
+            f"Layer count mismatch: content={content_layer_nums}, "
+            f"style={style_layer_nums}, lighting={lighting_layer_nums}"
+        )
+
+    if content_layer_nums == 190:
+        unet = unet.transformer
+        for attn_processor_name, attn_processor in unet.attn_processors.items():
+            attn_module = unet
+            for n in attn_processor_name.split(".")[:-1]:
+                attn_module = getattr(attn_module, n)
+            attn_name = ".".join(attn_processor_name.split(".")[:-1])
+
+            # Merge weights for all 3 LoRAs
+            merged_lora_weights_dict_1_a, merged_lora_weights_dict_1_b = (
+                merge_community_flux_lora_weights(
+                    tensors=lora_weights_content,
+                    key=attn_name,
+                    layer_num=content_layer_nums,
+                )
+            )
+            merged_lora_weights_dict_2_a, merged_lora_weights_dict_2_b = (
+                merge_community_flux_lora_weights(
+                    tensors=lora_weights_style,
+                    key=attn_name,
+                    layer_num=style_layer_nums,
+                )
+            )
+            merged_lora_weights_dict_3_a, merged_lora_weights_dict_3_b = (
+                merge_community_flux_lora_weights(
+                    tensors=lora_weights_lighting,
+                    key=attn_name,
+                    layer_num=lighting_layer_nums,
+                )
+            )
+
+            kwargs = {
+                "alpha": alpha,
+                "beta": beta,
+                "gamma": gamma,
+                "sum_timesteps": sum_timesteps,
+                "average_ratio": average_ratio,
+                "average_ratio_1_3": average_ratio_1_3,
+                "average_ratio_2_3": average_ratio_2_3,
+                "pattern": patten,
+                "state_dict_1_a": merged_lora_weights_dict_1_a,
+                "state_dict_1_b": merged_lora_weights_dict_1_b,
+                "state_dict_2_a": merged_lora_weights_dict_2_a,
+                "state_dict_2_b": merged_lora_weights_dict_2_b,
+                "state_dict_3_a": merged_lora_weights_dict_3_a,
+                "state_dict_3_b": merged_lora_weights_dict_3_b,
+            }
+
+            # Set up LoRA compatible layers
+            copy_and_assign_klora_weights(attn_module, "to_q")
+            copy_and_assign_klora_weights(attn_module, "to_k")
+            copy_and_assign_klora_weights(attn_module, "to_v")
+
+            to_k = LoRACompatibleLinear(
+                in_features=attn_module.to_k.in_features,
+                out_features=attn_module.to_k.out_features,
+                bias=True,
+                device=attn_module.to_k.weight.device,
+                dtype=attn_module.to_k.weight.dtype,
+            )
+            to_k.weight.data = attn_module.to_k.weight.data.clone()
+            to_k.bias.data = attn_module.to_k.bias.data.clone()
+            attn_module.to_k = to_k
+
+            # Set 3-LoRA layers
+            attn_module.to_q.set_lora_layer(
+                initialize_klora_layer_3lora(
+                    **kwargs,
+                    part="to_q",
+                    in_features=attn_module.to_q.in_features,
+                    out_features=attn_module.to_q.out_features,
+                )
+            )
+            attn_module.to_k.set_lora_layer(
+                initialize_klora_layer_3lora(
+                    **kwargs,
+                    part="to_k",
+                    in_features=attn_module.to_k.in_features,
+                    out_features=attn_module.to_k.out_features,
+                )
+            )
+            attn_module.to_v.set_lora_layer(
+                initialize_klora_layer_3lora(
+                    **kwargs,
+                    part="to_v",
+                    in_features=attn_module.to_v.in_features,
+                    out_features=attn_module.to_v.out_features,
+                )
+            )
+
+            if not ("single" in attn_name):
+                attn_module.to_out[0].set_lora_layer(
+                    initialize_klora_layer_3lora(
+                        **kwargs,
+                        part="to_out.0",
+                        in_features=attn_module.to_out[0].in_features,
+                        out_features=attn_module.to_out[0].out_features,
+                    )
+                )
+
+    elif content_layer_nums == 494:
+        sum_timesteps = 11704
+        unet = unet.transformer
+        # load single_transformer_blocks_lora
+        for index, layer_name in enumerate(unet.single_transformer_blocks):
+            # proj
+            prefix = "transformer.single_transformer_blocks." + str(index) + "."
+            copy_and_assign_klora_weights_3lora(
+                prefix=prefix,
+                attn_module=layer_name,
+                sub_module_names=["proj_mlp", "proj_out"],
+                lora_weights_content=lora_weights_content,
+                lora_weights_style=lora_weights_style,
+                lora_weights_lighting=lora_weights_lighting,
+                alpha=alpha,
+                beta=beta,
+                gamma=gamma,
+                sumtimesteps=sum_timesteps,
+                average_ratio=average_ratio,
+                average_ratio_1_3=average_ratio_1_3,
+                average_ratio_2_3=average_ratio_2_3,
+                patten=patten,
+            )
+            # attn
+            temp_layer = layer_name.attn
+            copy_and_assign_klora_weights_3lora(
+                prefix=prefix + "attn.",
+                attn_module=temp_layer,
+                sub_module_names=["to_q", "to_k", "to_v"],
+                lora_weights_content=lora_weights_content,
+                lora_weights_style=lora_weights_style,
+                lora_weights_lighting=lora_weights_lighting,
+                alpha=alpha,
+                beta=beta,
+                gamma=gamma,
+                sumtimesteps=sum_timesteps,
+                average_ratio=average_ratio,
+                average_ratio_1_3=average_ratio_1_3,
+                average_ratio_2_3=average_ratio_2_3,
+                patten=patten,
+            )
+            # norm
+            temp_layer = layer_name.norm
+            copy_and_assign_klora_weights_3lora(
+                prefix=prefix + "norm.",
+                attn_module=temp_layer,
+                sub_module_names=["linear"],
+                lora_weights_content=lora_weights_content,
+                lora_weights_style=lora_weights_style,
+                lora_weights_lighting=lora_weights_lighting,
+                alpha=alpha,
+                beta=beta,
+                gamma=gamma,
+                sumtimesteps=sum_timesteps,
+                average_ratio=average_ratio,
+                average_ratio_1_3=average_ratio_1_3,
+                average_ratio_2_3=average_ratio_2_3,
+                patten=patten,
+            )
+
+        # load transformer_blocks_lora
+        for index, layer_name in enumerate(unet.transformer_blocks):
+            prefix = "transformer.transformer_blocks." + str(index) + "."
+            # attn
+            temp_layer = layer_name.attn
+            copy_and_assign_klora_weights_3lora(
+                prefix=prefix + "attn.",
+                attn_module=temp_layer,
+                sub_module_names=[
+                    "add_k_proj",
+                    "add_q_proj",
+                    "add_v_proj",
+                    "to_add_out",
+                    "to_k",
+                    "to_q",
+                    "to_v",
+                ],
+                lora_weights_content=lora_weights_content,
+                lora_weights_style=lora_weights_style,
+                lora_weights_lighting=lora_weights_lighting,
+                alpha=alpha,
+                beta=beta,
+                gamma=gamma,
+                sumtimesteps=sum_timesteps,
+                average_ratio=average_ratio,
+                average_ratio_1_3=average_ratio_1_3,
+                average_ratio_2_3=average_ratio_2_3,
+                patten=patten,
+            )
+            temp_layer = layer_name.attn.to_out[0]
+            copy_and_assign_klora_weights_3lora(
+                prefix=prefix + "attn.to_out.0",
+                attn_module=temp_layer,
+                sub_module_names=[""],
+                lora_weights_content=lora_weights_content,
+                lora_weights_style=lora_weights_style,
+                lora_weights_lighting=lora_weights_lighting,
+                alpha=alpha,
+                beta=beta,
+                gamma=gamma,
+                sumtimesteps=sum_timesteps,
+                average_ratio=average_ratio,
+                average_ratio_1_3=average_ratio_1_3,
+                average_ratio_2_3=average_ratio_2_3,
+                patten=patten,
+            )
+            # norm1
+            temp_layer = layer_name.norm1
+            copy_and_assign_klora_weights_3lora(
+                prefix=prefix + "norm1.",
+                attn_module=temp_layer,
+                sub_module_names=["linear"],
+                lora_weights_content=lora_weights_content,
+                lora_weights_style=lora_weights_style,
+                lora_weights_lighting=lora_weights_lighting,
+                alpha=alpha,
+                beta=beta,
+                gamma=gamma,
+                sumtimesteps=sum_timesteps,
+                average_ratio=average_ratio,
+                average_ratio_1_3=average_ratio_1_3,
+                average_ratio_2_3=average_ratio_2_3,
+                patten=patten,
+            )
+            # ff
+            for idx, sub_layer_name in enumerate(layer_name.ff.net):
+                if idx == 0:
+                    copy_and_assign_klora_weights_3lora(
+                        prefix=prefix + "ff.net." + str(idx) + ".",
+                        attn_module=sub_layer_name,
+                        sub_module_names=["proj"],
+                        lora_weights_content=lora_weights_content,
+                        lora_weights_style=lora_weights_style,
+                        lora_weights_lighting=lora_weights_lighting,
+                        alpha=alpha,
+                        beta=beta,
+                        gamma=gamma,
+                        sumtimesteps=sum_timesteps,
+                        average_ratio=average_ratio,
+                        average_ratio_1_3=average_ratio_1_3,
+                        average_ratio_2_3=average_ratio_2_3,
+                        patten=patten,
+                    )
+                if idx == 2:
+                    copy_and_assign_klora_weights_3lora(
+                        prefix=prefix + "ff.net." + str(idx),
+                        attn_module=sub_layer_name,
+                        sub_module_names=[""],
+                        lora_weights_content=lora_weights_content,
+                        lora_weights_style=lora_weights_style,
+                        lora_weights_lighting=lora_weights_lighting,
+                        alpha=alpha,
+                        beta=beta,
+                        gamma=gamma,
+                        sumtimesteps=sum_timesteps,
+                        average_ratio=average_ratio,
+                        average_ratio_1_3=average_ratio_1_3,
+                        average_ratio_2_3=average_ratio_2_3,
+                        patten=patten,
+                    )
+            # ff_context
+            for idx, sub_layer_name in enumerate(layer_name.ff_context.net):
+                if idx == 0:
+                    copy_and_assign_klora_weights_3lora(
+                        prefix=prefix + "ff_context.net." + str(idx) + ".",
+                        attn_module=sub_layer_name,
+                        sub_module_names=["proj"],
+                        lora_weights_content=lora_weights_content,
+                        lora_weights_style=lora_weights_style,
+                        lora_weights_lighting=lora_weights_lighting,
+                        alpha=alpha,
+                        beta=beta,
+                        gamma=gamma,
+                        sumtimesteps=sum_timesteps,
+                        average_ratio=average_ratio,
+                        average_ratio_1_3=average_ratio_1_3,
+                        average_ratio_2_3=average_ratio_2_3,
+                        patten=patten,
+                    )
+                if idx == 2:
+                    copy_and_assign_klora_weights_3lora(
+                        prefix=prefix + "ff_context.net." + str(idx),
+                        attn_module=sub_layer_name,
+                        sub_module_names=[""],
+                        lora_weights_content=lora_weights_content,
+                        lora_weights_style=lora_weights_style,
+                        lora_weights_lighting=lora_weights_lighting,
+                        alpha=alpha,
+                        beta=beta,
+                        gamma=gamma,
+                        sumtimesteps=sum_timesteps,
+                        average_ratio=average_ratio,
+                        average_ratio_1_3=average_ratio_1_3,
+                        average_ratio_2_3=average_ratio_2_3,
+                        patten=patten,
+                    )
+
+    else:
+        raise ValueError(
+            f"3-LoRA fusion only supports 190 or 494-layer FLUX LoRAs. "
+            f"Got {content_layer_nums} layers."
+        )
+
     return unet
 
 
