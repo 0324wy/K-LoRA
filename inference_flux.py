@@ -98,6 +98,12 @@ def parse_args():
         help="Pattern for the image generation",
         default="s*",
     )
+    parser.add_argument(
+        "--num_samples",
+        type=int,
+        help="Number of images to generate",
+        default=40,
+    )
     return parser.parse_args()
 
 
@@ -138,7 +144,7 @@ pipe.to(device, dtype=torch.float16)
 
 
 def run():
-    seeds = list(range(40))
+    seeds = list(range(args.num_samples))
 
     for index, seed in enumerate(seeds):
         generator = torch.Generator(device=device).manual_seed(seed)
