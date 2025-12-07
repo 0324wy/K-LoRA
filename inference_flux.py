@@ -88,17 +88,14 @@ style_lora_weight_names = [
 # Lighting/Atmosphere LoRAs for 3-LoRA fusion
 record_lighting_loras = [
     "aixonlab/FLUX.1-dev-LoRA-Cinematic-Octane",
-    "dvyio/flux-lora-film-noir",
     "fofr/flux-80s-cyberpunk",
 ]
 lighting_triggers = [
     "cinematic_octane",
-    "in the style of FLMNR",
     "style of 80s cyberpunk",
 ]
 lighting_lora_weight_names = [
     "cinematic-octane.safetensors",
-    "pytorch_lora_weights.safetensors",
     "lora.safetensors",
 ]
 
@@ -108,8 +105,8 @@ def parse_args():
     parser.add_argument(
         "--pretrained_model_name_or_path",
         type=str,
-        default="/home/ubuntu/.cache/huggingface/hub/models--black-forest-labs--FLUX.1-dev/snapshots/0ef5fff789c832c5c7f4e127f94c8b54bbcced44/",
-        help="Pretrained model path",
+        default="black-forest-labs/FLUX.1-dev",
+        help="Pretrained model path or HuggingFace model ID",
     )
     parser.add_argument(
         "--output_folder",
