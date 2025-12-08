@@ -116,11 +116,13 @@ python inference_sd.py \
 
 #### 2.2 FLUX
 
-If you want to test the **FLUX** version of K-LoRA, you can directly run the `inference_flux.py` script to perform inference using the community LoRA. 
+If you want to test the **FLUX** version of K-LoRA, you can directly run the `inference_flux.py` script to perform inference using the community LoRA.
 
 If you are using **FLUX** for testing, it is recommended to use a higher version of Flux. Please refer to [FLUX](https://github.com/black-forest-labs/flux) for the dependency details.
 
-If you wish to use the local **FLUX LoRA**, it is recommended to train it using the Dreambooth LoRA. For training instructions, you can refer to [dreambooth_lora](https://huggingface.co/docs/peft/main/en/task_guides/dreambooth_lora). 
+If you wish to use the local **FLUX LoRA**, it is recommended to train it using the Dreambooth LoRA. For training instructions, you can refer to [dreambooth_lora](https://huggingface.co/docs/peft/main/en/task_guides/dreambooth_lora).
+
+##### 2-LoRA Mode (Content + Style)
 
 For local LoRA inference, you can directly add the following plug-and-play command when performing inference.
 
@@ -137,6 +139,85 @@ unet = insert_community_flux_lora_to_unet(
     content_lora_weight_name=content_lora_weight_name,
     style_lora_weight_name=style_lora_weight_name,
 )
+```
+
+##### 3-LoRA Mode (Content + Style + Lighting)
+
+We extend K-LoRA to support 3 LoRAs for fusing Content, Style, and Lighting/Atmosphere effects using 3-way argmax selection.
+
+```bash
+# 3-LoRA inference
+python inference_flux.py \
+    --content_index=0 \
+    --style_index=0 \
+    --lighting_index=0 \
+    --gamma=0.3 \
+    --output_folder=output_3lora
+
+# Comparison mode: generates 5 images per seed for ablation study
+python inference_flux.py \
+    --content_index=0 \
+    --style_index=0 \
+    --lighting_index=0 \
+    --comparison_mode \
+    --num_samples=5 \
+    --output_folder=output_comparison
+```
+
+**Available LoRAs:**
+
+| Type | Index | LoRA | Trigger Word |
+|------|-------|------|--------------|
+| Content | 0 | ginipick/flux-lora-eric-cat | eric cat |
+| Content | 1 | antix82_flux_dev_marv | marv frog man marv |
+| Content | 2 | festerbitcoin_86601_cats | Cat rule the world |
+| Content | 3 | fabian3000_chillguy | chillguy |
+| Style | 0 | bingbangboom_flux_surf | SRFNGV01 |
+| Style | 1 | mindlywork_AcrylicWorld | Acryl!ck |
+| Style | 2-11 | (various styles) | (see code) |
+| Lighting | 0 | FLUX.1-dev-LoRA-Cinematic-Octane | cinematic_octane |
+| Lighting | 1 | flux-80s-cyberpunk | style of 80s cyberpunk |
+
+**Comparison Mode Output:**
+
+| Mode | Description |
+|------|-------------|
+| content_only | Content LoRA only |
+| style_only | Style LoRA only |
+| lighting_only | Lighting LoRA only |
+| content_style | 2-LoRA baseline (Content + Style) |
+| content_style_lighting | Full 3-LoRA fusion |
+
+**Programmatic Usage:**
+
+```python
+from utils import insert_community_flux_lora_to_unet_3lora
+
+unet = insert_community_flux_lora_to_unet_3lora(
+    unet=pipe,
+    lora_weights_content_path=content_lora,
+    lora_weights_style_path=style_lora,
+    lora_weights_lighting_path=lighting_lora,
+    alpha=alpha,
+    beta=beta,
+    gamma=gamma,  # Lighting time scaling factor
+    diffuse_step=flux_diffuse_step,
+    content_lora_weight_name=content_lora_weight_name,
+    style_lora_weight_name=style_lora_weight_name,
+    lighting_lora_weight_name=lighting_lora_weight_name,
+)
+```
+
+##### Analyze LoRA Selection Patterns
+
+To analyze which LoRA is selected at each layer/timestep without generating images:
+
+```bash
+python analyze_lora_selection.py \
+    --content_index=0 \
+    --style_index=0 \
+    --lighting_index=0 \
+    --output_json=selection_stats.json
 ```
 
 ## Citation
